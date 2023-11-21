@@ -49,7 +49,7 @@ Adjust the configuration parameters in the code as needed:
 - Motor and servo pin configurations
 
 ## Author
-[ Shreyas KB](https://your.linkedin.profile)
+[ Shreyas KB](https://www.linkedin.com/in/shreyaskb333/)
 
 ## License
 This project is licensed under the [CC License](LICENSE).
