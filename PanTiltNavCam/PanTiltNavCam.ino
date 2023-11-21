@@ -1,412 +1,416 @@
-// Header Declaration
-#include <IRremote.h>
-#include <Servo.h>
+#include "esp_camera.h"
+#include <Arduino.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <iostream>
+#include <sstream>
+#include <ESP32Servo.h>
 
-// Configuring the IR Receiver
-const int RECV_PIN = A3;
-IRrecv irrecv(RECV_PIN);
-decode_results results;
-unsigned long lastIRTime = 0;
-const unsigned long IRDebounceDelay = 500; // Adjust this value as needed
+#define DUMMY_SERVO1_PIN 12     //We need to create 2 dummy servos.
+#define DUMMY_SERVO2_PIN 13     //So that ESP32Servo library does not interfere with pwm channel and timer used by esp32 camera.
 
-unsigned long lastReceivedTime = 0;
-unsigned long debounceDelay = 1000;  // Adjust this value as needed
+#define PAN_PIN 14
+#define TILT_PIN 15
 
-// Command frequency configuration
-unsigned long commmandDelay = 1000;
-unsigned long rotationalCommandDelay = 2000;
+Servo dummyServo1;
+Servo dummyServo2;
+Servo panServo;
+Servo tiltServo;
 
-//Wheel configuration
-#define enA 11                    //Enable1 L298 Pin enA
-#define rightMotorForwordPin 10   //Motor1  L298 Pin rightMotorForwordPin
-#define rightMotorBackwardPin 9   //Motor1  L298 Pin rightMotorForwordPin
-#define leftMotorBackwardPin 8    //Motor2  L298 Pin rightMotorForwordPin
-#define leftMotorForwordPin 7     //Motor2  L298 Pin rightMotorForwordPin
-#define enB 6                     //Enable2 L298 Pin enB
+//Camera related constants
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
 
-// Ultrasonic Configuration
-#define echo A0     //Echo pin
-#define trigger A1  //Trigger pin
+const char* ssid     = "baby_pragyan";
+const char* password = "9108243172";
 
-// Servo configuration
-#define objServo A2
-#define spectServo A4
-#define solarServo A5
+AsyncWebServer server(80);
+AsyncWebSocket wsCamera("/Camera");
+AsyncWebSocket wsServoInput("/ServoInput");
+uint32_t cameraClientId = 0;
 
-// LED Configuration 
-#define spectLED 5
-#define laserLight 12
+#define LIGHT_PIN 4
+const int PWMLightChannel = 4;
 
-// Movement Configuration
-int distance_L, distance_F = 30, distance_R;
-long distance;
-int safetyDistance  = 20;  // Safty distance to be followed
+const char* htmlHomePage PROGMEM = R"HTMLHOMEPAGE(
+<!DOCTYPE html>
+<html>
+  <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <style>
+    .noselect {
+      -webkit-touch-callout: none; /* iOS Safari */
+        -webkit-user-select: none; /* Safari */
+         -khtml-user-select: none; /* Konqueror HTML */
+           -moz-user-select: none; /* Firefox */
+            -ms-user-select: none; /* Internet Explorer/Edge */
+                user-select: none; /* Non-prefixed version, currently
+                                      supported by Chrome and Opera */
+    }
 
-int IR_data = -1;  // variable to receive data from the serial port and IRremote
-int Speed = 255;
-int mode = 0;
+    .slidecontainer {
+      width: 100%;
+    }
 
-bool isSpectDiployed = false;  // Track the Spectrometer deployment state
-bool isSolarDeployed = false;  // Track the solar panel deployment state
-bool isLaserDeployed = false;  // Track the Laser Beam deployment state
+    .slider {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 20px;
+      border-radius: 5px;
+      background: #d3d3d3;
+      outline: none;
+      opacity: 0.7;
+      -webkit-transition: .2s;
+      transition: opacity .2s;
+    }
 
-void setup() {  // put your setup code here, to run once
-  //Configures the Ultrasonic Sensor of objServo
-  pinMode(echo, INPUT);      // declare ultrasonic sensor Echo pin as input
-  pinMode(trigger, OUTPUT);  // declare ultrasonic sensor Trigger pin as Output
+    .slider:hover {
+      opacity: 1;
+    }
+  
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: blue;
+      cursor: pointer;
+    }
 
-  //Configure the Modor Driver L298N
-  pinMode(enA, OUTPUT);                    // declare as output for L298 Pin enA
-  pinMode(rightMotorForwordPin, OUTPUT);   // declare as output for L298 Pin rightMotorForwordPin
-  pinMode(rightMotorBackwardPin, OUTPUT);  // declare as output for L298 Pin rightMotorBackwardPin
-  pinMode(leftMotorBackwardPin, OUTPUT);   // declare as output for L298 Pin leftMotorBackwardPin
-  pinMode(leftMotorForwordPin, OUTPUT);    // declare as output for L298 Pin leftMotorForwordPin
-  pinMode(enB, OUTPUT);                    // declare as output for L298 Pin enB
+    .slider::-moz-range-thumb {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: blue;
+      cursor: pointer;
+    }
 
-  //Configure the IR Receiver
-  delay(1000);          // Wait for 1 second
-  irrecv.enableIRIn();  // Start the receiver
-  irrecv.blink13(true);
-
-  Serial.begin(9600);  // start serial communication at 9600bps
-
-  // Configure the Servo motor
-  pinMode(objServo, OUTPUT);
-  pinMode(spectServo, OUTPUT);
-  pinMode(solarServo, OUTPUT);
-
-  // LED Configuration 
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(spectLED, OUTPUT);
-  pinMode(laserLight, OUTPUT);
-
-  // Serial.println();
-  // Serial.println("Rover Initialized.............");
-  // for (int i = 0; i < 30; i++) {
-  //   Serial.print("#");
-  //   delay(200);
-  // }
-  // Serial.println();
-
-  // Check spectLED
-  for (int angle = 65; angle <= 140; angle += 1) {
-    delay(10);
-    servoPulse(spectServo, angle);
-  }
-  digitalWrite(spectLED, LOW);
-  delay(1000);
-  digitalWrite(spectLED, HIGH);
-  for (int angle = 140; angle >= 65; angle -= 1) {
-    servoPulse(spectServo, angle);
-  }
-
-  // Check objServo
-  for (int angle = 80; angle <= 185; angle += 5) {
-    servoPulse(objServo, angle);
-  }
-  for (int angle = 185; angle >= 10; angle -= 5) {
-    servoPulse(objServo, angle);
-  }
-  for (int angle = 10; angle <= 80; angle += 5) {
-    servoPulse(objServo, angle);
-  }
-  delay(500);
-}
-
-void loop() {
-    if (irrecv.decode(&results)) {
-    // Check for debounce
-    unsigned long currentTime = millis();
-    if (currentTime - lastIRTime >= IRDebounceDelay) {
-      lastIRTime = currentTime;
-      if (millis() - lastReceivedTime >= debounceDelay) {
-        lastReceivedTime = millis();  // Update the last received time
-        IR_data = IRremote_data();
-        irrecv.resume();  // Receive the next value
-        delay(100);  // Add a delay to ignore additional signals
+    </style>
+  
+  </head>
+  <body class="noselect" align="center" style="background-color:white">
+     
+    <!--h2 style="color: teal;text-align:center;">Wi-Fi Camera &#128663; Control</h2-->
+    
+    <table id="mainTable" style="width:400px;margin:auto;table-layout:fixed" CELLSPACING=10>
+      <tr>
+        <img id="cameraImage" src="" style="width:400px;height:250px"></td>
+      </tr> 
+      <tr/><tr/>
+      <tr>
+        <td style="text-align:left"><b>Pan:</b></td>
+        <td colspan=2>
+         <div class="slidecontainer">
+            <input type="range" min="0" max="180" value="90" class="slider" id="Pan" oninput='sendButtonInput("Pan",value)'>
+          </div>
+        </td>
+      </tr> 
+      <tr/><tr/>       
+      <tr>
+        <td style="text-align:left"><b>Tilt:</b></td>
+        <td colspan=2>
+          <div class="slidecontainer">
+            <input type="range" min="0" max="180" value="90" class="slider" id="Tilt" oninput='sendButtonInput("Tilt",value)'>
+          </div>
+        </td>   
+      </tr>
+      <tr/><tr/>       
+      <tr>
+        <td style="text-align:left"><b>Light:</b></td>
+        <td colspan=2>
+          <div class="slidecontainer">
+            <input type="range" min="0" max="255" value="0" class="slider" id="Light" oninput='sendButtonInput("Light",value)'>
+          </div>
+        </td>   
+      </tr>      
+    </table>
+  
+    <script>
+      var webSocketCameraUrl = "ws:\/\/" + window.location.hostname + "/Camera";
+      var webSocketServoInputUrl = "ws:\/\/" + window.location.hostname + "/ServoInput";      
+      var websocketCamera;
+      var websocketServoInput;
+      
+      function initCameraWebSocket() 
+      {
+        websocketCamera = new WebSocket(webSocketCameraUrl);
+        websocketCamera.binaryType = 'blob';
+        websocketCamera.onopen    = function(event){};
+        websocketCamera.onclose   = function(event){setTimeout(initCameraWebSocket, 2000);};
+        websocketCamera.onmessage = function(event)
+        {
+          var imageId = document.getElementById("cameraImage");
+          imageId.src = URL.createObjectURL(event.data);
+        };
       }
+      
+      function initServoInputWebSocket() 
+      {
+        websocketServoInput = new WebSocket(webSocketServoInputUrl);
+        websocketServoInput.onopen    = function(event)
+        {
+          var panButton = document.getElementById("Pan");
+          sendButtonInput("Pan", panButton.value);
+          var tiltButton = document.getElementById("Tilt");
+          sendButtonInput("Tilt", tiltButton.value);
+          var lightButton = document.getElementById("Light");
+          sendButtonInput("Light", lightButton.value);          
+        };
+        websocketServoInput.onclose   = function(event){setTimeout(initServoInputWebSocket, 2000);};
+        websocketServoInput.onmessage = function(event){};        
+      }
+      
+      function initWebSocket() 
+      {
+        initCameraWebSocket ();
+        initServoInputWebSocket();
+      }
+
+      function sendButtonInput(key, value) 
+      {
+        var data = key + "," + value;
+        websocketServoInput.send(data);
+      }
+    
+      window.onload = initWebSocket;
+      document.getElementById("mainTable").addEventListener("touchend", function(event){
+        event.preventDefault()
+      });      
+    </script>
+  </body>    
+</html>
+)HTMLHOMEPAGE";
+
+void handleRoot(AsyncWebServerRequest *request) 
+{
+  request->send_P(200, "text/html", htmlHomePage);
+}
+
+void handleNotFound(AsyncWebServerRequest *request) 
+{
+    request->send(404, "text/plain", "File Not Found");
+}
+
+void onServoInputWebSocketEvent(AsyncWebSocket *server, 
+                      AsyncWebSocketClient *client, 
+                      AwsEventType type,
+                      void *arg, 
+                      uint8_t *data, 
+                      size_t len) 
+{                      
+  switch (type) 
+  {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      panServo.write(90);
+      tiltServo.write(90);
+      ledcWrite(PWMLightChannel, 0);
+      break;
+    case WS_EVT_DATA:
+      AwsFrameInfo *info;
+      info = (AwsFrameInfo*)arg;
+      if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) 
+      {
+        std::string myData = "";
+        myData.assign((char *)data, len);
+        Serial.printf("Key,Value = [%s]\n", myData.c_str());        
+        std::istringstream ss(myData);
+        std::string key, value;
+        std::getline(ss, key, ',');
+        std::getline(ss, value, ',');
+        if ( value != "" )
+        {
+          int valueInt = atoi(value.c_str());
+          if (key == "Pan")
+          {
+            panServo.write(valueInt);
+          }
+          else if (key == "Tilt")
+          {
+            tiltServo.write(valueInt);   
+          }
+          else if (key == "Light")
+          {
+            ledcWrite(PWMLightChannel, valueInt);         
+          }           
+        }
+      }
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+    default:
+      break;  
+  }
+}
+
+void onCameraWebSocketEvent(AsyncWebSocket *server, 
+                      AsyncWebSocketClient *client, 
+                      AwsEventType type,
+                      void *arg, 
+                      uint8_t *data, 
+                      size_t len) 
+{                      
+  switch (type) 
+  {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      cameraClientId = client->id();
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      cameraClientId = 0;
+      break;
+    case WS_EVT_DATA:
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+    default:
+      break;  
+  }
+}
+
+void setupCamera()
+{
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM;
+  config.pin_d1 = Y3_GPIO_NUM;
+  config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM;
+  config.pin_d4 = Y6_GPIO_NUM;
+  config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM;
+  config.pin_d7 = Y9_GPIO_NUM;
+  config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM;
+  config.pin_vsync = VSYNC_GPIO_NUM;
+  config.pin_href = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM;
+  config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  
+  config.frame_size = FRAMESIZE_VGA;
+  config.jpeg_quality = 10;
+  config.fb_count = 1;
+
+  // camera init
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) 
+  {
+    Serial.printf("Camera init failed with error 0x%x", err);
+    return;
+  }  
+
+  if (psramFound())
+  {
+    heap_caps_malloc_extmem_enable(20000);  
+    Serial.printf("PSRAM initialized. malloc to take memory from psram above this size");    
+  }  
+}
+
+void sendCameraPicture()
+{
+  if (cameraClientId == 0)
+  {
+    return;
+  }
+  unsigned long  startTime1 = millis();
+  //capture a frame
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) 
+  {
+      Serial.println("Frame buffer could not be acquired");
+      return;
+  }
+
+  unsigned long  startTime2 = millis();
+  wsCamera.binary(cameraClientId, fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+    
+  //Wait for message to be delivered
+  while (true)
+  {
+    AsyncWebSocketClient * clientPointer = wsCamera.client(cameraClientId);
+    if (!clientPointer || !(clientPointer->queueIsFull()))
+    {
+      break;
     }
+    delay(1);
   }
-
-  analogWrite(enA, Speed);  // Write The Duty Cycle 0 to 255 Enable Pin A for Motor1 Speed
-  analogWrite(enB, Speed);  // Write The Duty Cycle 0 to 255 Enable Pin B for Motor2 Speed
-
-  if (mode == 0) {
-    //===============================================================================
-    //                          Manual Control Command
-    //===============================================================================
-    if (IR_data == 1) {
-      // if the IR_data is '1' the DC motor will go forward
-      forword();
-      delay(commmandDelay);
-      IR_data = 5; 
-    } else if (IR_data == 2) {
-      // if the IR_data is '2' the motor will Reverse
-      backword();
-      delay(commmandDelay);
-      IR_data = 5;
-    } else if (IR_data == 3) {
-      // if the IR_data is '3' the motor will turn left
-      turnLeft();
-      delay(commmandDelay);
-      IR_data = 5;
-    } else if (IR_data == 4) {
-      // if the IR_data is '4' the motor will turn right
-      turnRight();
-      delay(commmandDelay);
-      IR_data = 5;
-    } else if (IR_data == 5) { 
-      // if the IR_data '5' the motor will Stop
-      Stop(); 
-      IR_data = -1;
-    } else if (IR_data == 6) {
-      // Manual IR Remote Control Command
-      IR_data = -1;
-      Stop();
-      Serial.println();
-      Serial.println("# >> Rover is on Manual Mode.");
-      mode = 0;
-    } else if (IR_data == 7) {
-      // Autonomous Mode Command
-      IR_data = -1;
-      Serial.println();
-      Serial.println("# >> Rover is on Autonomous Mode.");
-      mode = 1;
-    } else if (IR_data == 8) {
-      // Deploy the Spectometer
-      IR_data = -1;
-      spectDeploy(isSpectDiployed);
-    } else if (IR_data == 9) {
-      // Deploy the Solar Panel
-      IR_data = -1;
-      solarDeploy(isSpectDiployed);
-    } else if (IR_data == 10) {
-      // Initialize the Laser Spectrometer 
-      IR_data = -1;
-      laserBeam(isLaserDeployed);
-    }
-  }
-
-  if (mode == 1) {
-    //===============================================================================
-    //                          Autonomous Control Mode
-    //===============================================================================
-    distance_F = Ultrasonic_read();
-    Serial.println("Next obstacle is in " + String(distance_F) + "cm ");
-    if (IR_data == 5) {
-      // Stop the rover if IR command to stop is received
-      Stop();
-      mode = 0;
-      IR_data = -1;
-    } else if (IR_data == 6) {
-      // Switch to Manual Mode if IR command received
-      mode = 0;
-      IR_data = -1;
-    } else if (distance_F > safetyDistance) {
-      forword();
-    } else {
-      Check_side();
-    }
-  }
-  delay(10);
+  
+  unsigned long  startTime3 = millis();  
+  Serial.printf("Time taken Total: %d|%d|%d\n",startTime3 - startTime1, startTime2 - startTime1, startTime3-startTime2 );
 }
 
-long IRremote_data() {
-  if (results.value == 0xC00058) { IR_data = 1; }       // BlueUp Button
-  else if (results.value == 0xC00059) { IR_data = 2; }  // BlueDown Button
-  else if (results.value == 0xC0005A) { IR_data = 3; }  // BlueLeft Button
-  else if (results.value == 0xC0005B) { IR_data = 4; }  // BlueRight Button
-  else if (results.value == 0xC0005C) { IR_data = 5; }  // Select Button
-  else if (results.value == 0xC000CC) { IR_data = 6; }  // Blue "Guide Button"
-  else if (results.value == 0xC0007D) { IR_data = 7; }  // Blue "On Demand"
-  else if (results.value == 0xC0006F) { IR_data = 8; }  // Yellow Color Button
-  else if (results.value == 0xC00070) { IR_data = 9; }  // Blue Color Button
-  else if (results.value == 0xC0006D) { IR_data = 10;}  // Red Color Button
-  return IR_data;
+void setUpPinModes()
+{
+  dummyServo1.attach(DUMMY_SERVO1_PIN);
+  dummyServo2.attach(DUMMY_SERVO2_PIN);  
+  panServo.attach(PAN_PIN);
+  tiltServo.attach(TILT_PIN);
+
+  //Set up flash light
+  ledcSetup(PWMLightChannel, 1000, 8);
+  pinMode(LIGHT_PIN, OUTPUT);    
+  ledcAttachPin(LIGHT_PIN, PWMLightChannel);
 }
 
-void servoPulse(int pin, int angle) {
-  // Calculate the pulse width in microseconds based on the desired angle.
-  int pwm = (angle * 11) + 500;
 
-  // safetyDistance the specified GPIO pin to HIGH to start the pulse to the servo motor.
-  digitalWrite(pin, HIGH);
+void setup(void) 
+{
+  setUpPinModes();
+  Serial.begin(115200);
 
-  // Delay for the calculated pulse width in microseconds, controlling the servo's position.
-  delayMicroseconds(pwm);
+  WiFi.softAP(ssid, password);
+  IPAddress IP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(IP);
 
-  // safetyDistance  the GPIO pin to LOW, indicating the end of the pulse.
-  digitalWrite(pin, LOW);
+  server.on("/", HTTP_GET, handleRoot);
+  server.onNotFound(handleNotFound);
+      
+  wsCamera.onEvent(onCameraWebSocketEvent);
+  server.addHandler(&wsCamera);
 
-  // Add a delay for 50 milliseconds to allow the servo to settle in its new position.
-  delay(50);
+  wsServoInput.onEvent(onServoInputWebSocketEvent);
+  server.addHandler(&wsServoInput);
+
+  server.begin();
+  Serial.println("HTTP server started");
+
+  setupCamera();
 }
 
-// Function to measure distance using an ultrasonic sensor
-long Ultrasonic_read() {
-  Serial.println("# >> Reading Ultrasonic........");
-  // Step 1: Set the trigger pin to LOW
-  digitalWrite(trigger, LOW);
-  // Small delay to ensure the sensor is in a stable state
-  delayMicroseconds(2);
 
-  // Step 2: Set the trigger pin to HIGH to send an ultrasonic pulse
-  digitalWrite(trigger, HIGH);
-  // Delay for a specific duration to generate an ultrasonic pulse
-  delayMicroseconds(10);
-
-  // Step 3: Measure the duration of the echo pulse
-  // The pulseIn function measures the time in microseconds for the echo pin to go HIGH
-  // This duration represents the time it took for the ultrasonic pulse to travel to the object and back
-  distance = pulseIn(echo, HIGH);
-
-  // Step 4: Calculate the distance in centimeters
-  // Divide the measured pulse duration by a constant (29) and then divide by 2 to account for the round trip
-  // This formula converts the time into distance
-  return distance / 29 / 2;
-}
-
-void compareDistance() {
-  if (distance_L > distance_R) {
-    // Rover Turns left if the distaste of left side is grater than right side.
-    turnLeft();
-    delay(rotationalCommandDelay);
-  } else if (distance_R > distance_L) {
-    // Rover Turns right if the distaste of right side is grater than left side.
-    turnRight();
-    delay(rotationalCommandDelay);
-  } else {
-    // Take reverse then turns right if both side obstacles
-    backword();
-    delay(3000);
-    turnRight();
-    delay(rotationalCommandDelay);
-  }
-}
-
-void Check_side() {
-  Serial.println("# >> Rover measuring both side distance.");
-  Stop();
-  delay(100);
-  for (int angle = 80; angle <= 185; angle += 5) {
-    // Ultrasonic sensor rotated right side from centre
-    servoPulse(objServo, angle);
-  }
-  delay(600);
-  distance_R = Ultrasonic_read();  // Assign the value of distance to varible
-  delay(500);
-
-  for (int angle = 185; angle >= 10; angle -= 5) {
-    // Ultrasonic sensor rotated left from the left side
-    servoPulse(objServo, angle);
-  }
-  delay(500);
-  distance_L = Ultrasonic_read();  // Assign the value of distance to varible
-  delay(500);
-
-  for (int angle = 10; angle <= 80; angle += 5) {
-    // Ultrasonic rotated centered from the right side
-    servoPulse(objServo, angle);
-  }
-  delay(500);
-
-  compareDistance();
-}
-
-void forword() {
-  //forword Motion
-  Serial.println("# >> Rover Moving Forward.");
-  digitalWrite(rightMotorForwordPin, HIGH);  // Right Motor forword Pin
-  digitalWrite(rightMotorBackwardPin, LOW);  // Right Motor backword Pin
-  digitalWrite(leftMotorBackwardPin, LOW);   // Left Motor backword Pin
-  digitalWrite(leftMotorForwordPin, HIGH);   // Left Motor forword Pin
-}
-
-void backword() {
-  //backword Motion
-  Serial.println("# >> Rover Taking Reverse.");
-  digitalWrite(rightMotorForwordPin, LOW);    // Right Motor forword Pin
-  digitalWrite(rightMotorBackwardPin, HIGH);  // Right Motor backword Pin
-  digitalWrite(leftMotorBackwardPin, HIGH);   // Left Motor backword Pin
-  digitalWrite(leftMotorForwordPin, LOW);     // Left Motor forword Pin
-}
-
-void turnRight() {
-  //turnLeft 
-  Serial.println("# >> Rover turning left.");
-  digitalWrite(rightMotorForwordPin, HIGH);  // Right Motor forword Pin
-  digitalWrite(rightMotorBackwardPin, LOW);  // Right Motor backword Pin
-  digitalWrite(leftMotorBackwardPin, HIGH);  // Left Motor backword Pin
-  digitalWrite(leftMotorForwordPin, LOW);    // Left Motor forword Pin
-}
-
-void turnLeft() {
-  //turnRight
-  Serial.println("# >> Rover turning right");
-  digitalWrite(rightMotorForwordPin, LOW);    // Right Motor forword Pin
-  digitalWrite(rightMotorBackwardPin, HIGH);  // Right Motor backword Pin
-  digitalWrite(leftMotorBackwardPin, LOW);    // Left Motor backword Pin
-  digitalWrite(leftMotorForwordPin, HIGH);    // Left Motor forword Pin
-}
-
-void Stop() {
-  //stop the motion
-  Serial.println("# >> Rover stopped.");
-  digitalWrite(rightMotorForwordPin, LOW);   // Right Motor forword Pin
-  digitalWrite(rightMotorBackwardPin, LOW);  // Right Motor backword Pin
-  digitalWrite(leftMotorBackwardPin, LOW);   // Left Motor backword Pin
-  digitalWrite(leftMotorForwordPin, LOW);    // Left Motor forword Pin
-  IR_data = -1;
-}
-
-void spectDeploy(bool &isSpectDeployed) {
-  if (!isSpectDeployed) {
-    for (int angle = 65; angle <= 140; angle += 1) {
-      servoPulse(spectServo, angle);
-    }
-    isSpectDeployed = true;
-    digitalWrite(spectLED, LOW);
-    Serial.println("# >> Rover is Deploying the Spectrometer.");
-    delay(1000);
-  } else {
-    digitalWrite(spectLED, HIGH);
-    for (int angle = 140; angle >= 65; angle -= 1) {
-      servoPulse(spectServo, angle);
-    }
-    isSpectDeployed = false;
-    Serial.println("# >> Rover is Contracting the spectrometer.");
-    delay(1000);
-  }
-}
-
-void solarDeploy(bool &isSolarDeployed) {
-  if (!isSolarDeployed) {
-    for (int angle = 80; angle >= 10; angle -= 1) {
-      servoPulse(solarServo, angle);
-    }
-    isSolarDeployed = true;
-    Serial.println("# >> Rover is Deploying the Solar Panel.");
-    delay(1000);
-  } else {
-    for (int angle = 10; angle <= 80; angle += 1) {
-      servoPulse(solarServo, angle);
-    }
-    isSolarDeployed = false;
-    Serial.println("# >> Rover is Contracting the Solar Panel.");
-    delay(1000);
-  }
-}
-
-void laserBeam(bool &isLaserDeployed) {
-  if (!isLaserDeployed) {
-    digitalWrite(laserLight, HIGH);
-    isLaserDeployed = true;
-    Serial.println("# >> Rover is Activating the Laser Beam.");
-    delay(1000);
-  } else {
-    digitalWrite(laserLight, LOW);
-    isLaserDeployed = false;
-    Serial.println("# >> Rover is Deactivating the Laser Beam.");
-    delay(1000);
-  }
+void loop() 
+{
+  wsCamera.cleanupClients(); 
+  wsServoInput.cleanupClients(); 
+  sendCameraPicture(); 
+  //Serial.printf("SPIRam Total heap %d, SPIRam Free Heap %d\n", ESP.getPsramSize(), ESP.getFreePsram());
 }
