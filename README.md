@@ -7,6 +7,16 @@ This repository combines three distinct control systems implemented using Arduin
 ### Overview
 The Arduino Rover Control System enables manual and autonomous control of a rover equipped with infrared (IR) remote communication, obstacle avoidance using ultrasonic sensors, and various deployment mechanisms. It utilizes an Arduino board, IR receiver, servo motors, and motor drivers for precise control.
 
+![DSC_2092](https://github.com/shreyaskbkukke/mini_chandrayan/assets/96857515/c480f3a2-5f66-47ee-8e68-4c316ae8aba3)
+
+![DSC_2095](https://github.com/shreyaskbkukke/mini_chandrayan/assets/96857515/84a739e4-5fb6-405c-9062-91e968926995)
+
+![DSC_2097](https://github.com/shreyaskbkukke/mini_chandrayan/assets/96857515/3e93d356-5716-4796-aa98-b90f4cad4cc8)
+
+![DSC_2099](https://github.com/shreyaskbkukke/mini_chandrayan/assets/96857515/c67dcdb3-94dd-49ef-bb72-685921124761)
+
+![DSC_2100](https://github.com/shreyaskbkukke/mini_chandrayan/assets/96857515/13fd8ad4-99e7-49ae-a049-5013c99d2960)
+
 ### Features
 - Manual control via IR remote
 - Autonomous mode with obstacle avoidance
